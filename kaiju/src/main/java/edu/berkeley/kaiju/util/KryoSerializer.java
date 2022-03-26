@@ -13,6 +13,7 @@ import edu.berkeley.kaiju.frontend.request.ClientRequest;
 import edu.berkeley.kaiju.frontend.request.ClientSetIsolationRequest;
 import edu.berkeley.kaiju.frontend.response.*;
 import edu.berkeley.kaiju.service.LockManager.LockDuration;
+import edu.berkeley.kaiju.service.LockManager.LockRequest;
 import edu.berkeley.kaiju.service.request.message.KaijuMessage;
 import edu.berkeley.kaiju.service.request.message.request.*;
 import edu.berkeley.kaiju.service.request.message.response.EigerCheckCommitResponse;
@@ -26,6 +27,7 @@ import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.concurrent.ConcurrentMap;
 
 public class KryoSerializer {
     private Output output;

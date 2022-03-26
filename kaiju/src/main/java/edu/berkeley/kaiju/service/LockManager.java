@@ -76,7 +76,7 @@ public class LockManager {
     public enum LockType { READ, WRITE }
     public enum LockDuration { LONG, SHORT };
 
-    private static class LockRequest {
+    public static class LockRequest {
         private final LockType type;
         private final Condition condition;
 

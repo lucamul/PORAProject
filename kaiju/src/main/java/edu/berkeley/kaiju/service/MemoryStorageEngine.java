@@ -81,7 +81,7 @@ public class MemoryStorageEngine {
 
     private static final long gcTimeMs = Config.getConfig().overwrite_gc_ms;
 
-    private static Logger logger = LoggerFactory.getLogger(MemoryStorageEngine.class);
+    public static Logger logger = LoggerFactory.getLogger(MemoryStorageEngine.class);
 
     /*
      We basically implement the KVS as a map from [Key, Timestamp] -> value, with an index on
@@ -109,9 +109,12 @@ public class MemoryStorageEngine {
 
     // a roughly time-ordered queue of KVPs to GC; exact real-time ordering not necessary for correctness
     private BlockingQueue<KeyTimestampPair> candidatesForGarbageCollection = Queues.newLinkedBlockingQueue();
-
-
-
+    
+    // used for freshness:
+    public ConcurrentMap<KeyTimestampPair,Long> timesPerVersion = Maps.newConcurrentMap();
+    public ConcurrentMap<String,Long> latestTime = Maps.newConcurrentMap();
+                                                                                
+    
     public MemoryStorageEngine() {
         // GC old versions
         new Thread(new Runnable() {
@@ -229,7 +232,10 @@ public class MemoryStorageEngine {
         if(ret == null)
             logger.warn("No suitable value found for key " + key
                                                + " version " + requiredTimestamp);
-
+        else{
+            long t = this.latestTime.get(key) - this.timesPerVersion.get(this.createNewKeyTimestampPair(key, requiredTimestamp));
+            logger.warn("Round 2 Freshness for key: " + key + " timestamp: " + requiredTimestamp + " = " + t);
+        }
         return ret;
     }
 
@@ -239,8 +245,11 @@ public class MemoryStorageEngine {
         // have to examine pending items now; look from highest to lowest
         for(long candidateStamp : inputTimestampList) {
             DataItem candidate = getItemByVersion(key, candidateStamp);
-            if(candidate != null)
+            if(candidate != null){
+                long t = this.latestTime.get(key) - this.timesPerVersion.get(this.createNewKeyTimestampPair(key, candidateStamp));
+                logger.warn("Freshness for key: " + key + " timestamp: " + candidateStamp + " = " + t);
                 return candidate;
+            }
         }
 
         return null;
@@ -249,7 +258,8 @@ public class MemoryStorageEngine {
     private DataItem getLatestItemForKey(String key) {
         if(!lastCommitForKey.containsKey(key))
             return DataItem.getNullItem();
-
+        long t = this.latestTime.get(key) - this.timesPerVersion.get(this.createNewKeyTimestampPair(key, lastCommitForKey.get(key)));
+        logger.warn("Round 1 Freshness for key: " + key + " timestamp: " + lastCommitForKey.get(key) + " = " + t);
         return getItemByVersion(key, lastCommitForKey.get(key));
     }
 
@@ -387,7 +397,11 @@ public class MemoryStorageEngine {
         candidatesForGarbageCollection.add(stamp);
     }
 
-    private class KeyTimestampPair {
+    public KeyTimestampPair createNewKeyTimestampPair(String key, long timestamp){
+        return new KeyTimestampPair(key,timestamp);
+    }
+
+    public class KeyTimestampPair {
         private String key;
         private long timestamp;
         private long expirationTime = -1;

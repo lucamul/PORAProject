@@ -44,6 +44,26 @@ lora_test = {
                     "check_commit_delays" : [-1],
 }
 
+lora_debug = {
+    "serversList" : [(5,5)],
+                    "txnlen" : [8],
+                    "threads" : [1000],
+                    "numseconds" : 60,
+                    "configs" : [
+                                  "READ_ATOMIC_LORA",
+                                  "READ_ATOMIC_LIST",
+                                ],
+                    "readprop" : [.95],
+                    "iterations" : range(0,1),
+                    "numkeys" : [100000],
+                    "valuesize" : [1],
+                    "keydistribution" : "zipfian",
+                    "bootstrap_time_ms" : 10000,
+                    "launch_in_bg" : False,
+                    "drop_commit_pcts" : [0],
+                    "check_commit_delays" : [-1],
+}
+
 def chg_param(d, param, value):
     d[param] = value
     return d
@@ -66,7 +86,7 @@ experiments = { "debug" :
                                       "readprop",
                                       [.95]),
                 
-                "lora" : lora_test,
+                "lora" : lora_debug,
                 
                 "threads" : chg_param(defaultsettings.copy(),
                                       "threads",
@@ -157,4 +177,3 @@ experiments = { "debug" :
                     "numkeys": [1000],
                 }
 }
-        
