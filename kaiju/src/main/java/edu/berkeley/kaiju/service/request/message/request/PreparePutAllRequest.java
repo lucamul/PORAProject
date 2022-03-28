@@ -1,5 +1,7 @@
 package edu.berkeley.kaiju.service.request.message.request;
 
+import edu.berkeley.kaiju.config.Config;
+import edu.berkeley.kaiju.config.Config.ReadAtomicAlgorithm;
 import edu.berkeley.kaiju.data.DataItem;
 import edu.berkeley.kaiju.exception.KaijuException;
 import edu.berkeley.kaiju.service.LockManager;
@@ -9,6 +11,8 @@ import edu.berkeley.kaiju.service.request.message.KaijuMessage;
 import edu.berkeley.kaiju.service.request.message.response.KaijuResponse;
 
 import java.util.Map;
+
+import com.google.common.collect.Lists;
 
 public class PreparePutAllRequest extends KaijuMessage implements IKaijuRequest {
     public Map<String, DataItem> keyValuePairs;
@@ -24,12 +28,18 @@ public class PreparePutAllRequest extends KaijuMessage implements IKaijuRequest 
                                                                                                     KaijuException {
         storageEngine.prepare(keyValuePairs);
         long time = System.currentTimeMillis();
-        for(Map.Entry<String,DataItem> entry : keyValuePairs.entrySet()){
-            storageEngine.timesPerVersion.putIfAbsent(storageEngine.createNewKeyTimestampPair(entry.getKey(), entry.getValue().getTimestamp()), time);
-            if(storageEngine.latestTime.containsKey(entry.getKey()) && storageEngine.latestTime.get(entry.getKey()) < time){
-                storageEngine.latestTime.replace(entry.getKey(),time);
-            }else{
-                storageEngine.latestTime.put(entry.getKey(), time);
+        if(Config.getConfig().freshness_test || Config.getConfig().readatomic_algorithm == ReadAtomicAlgorithm.LORA){
+            for(Map.Entry<String,DataItem> entry : keyValuePairs.entrySet()){
+                if(Config.getConfig().freshness_test){
+                    storageEngine.timesPerVersion.putIfAbsent(storageEngine.createNewKeyTimestampPair(entry.getKey(), entry.getValue().getTimestamp()), time);
+                    if(storageEngine.latestTime.containsKey(entry.getKey()) && storageEngine.latestTime.get(entry.getKey()) < time){
+                    storageEngine.latestTime.replace(entry.getKey(),time);
+                    }else{
+                    storageEngine.latestTime.put(entry.getKey(), time);
+                    }
+                }
+                if(Config.getConfig().readatomic_algorithm == ReadAtomicAlgorithm.LORA) 
+                    storageEngine.addLast(entry.getKey(), entry.getValue().getTimestamp(), Lists.newArrayList(entry.getValue().getTransactionKeys()));
             }
         }
         return new KaijuResponse();

@@ -31,7 +31,10 @@ public class Config {
     public static Config getConfig() {
         return instance;
     }
-
+    /*
+        Freshness, TO DO: change to parameter:
+    */
+    public Boolean freshness_test = false;
     /*
      Print Metrics stats for debugging and profiling.
      */

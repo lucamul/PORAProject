@@ -23,25 +23,10 @@ import java.util.Random;
 
 public class ReadAtomicLoraBasedKaijuServiceHandler extends ReadAtomicKaijuServiceHandler {
 
-    private ConcurrentMap<String,Long> last;
     public ReadAtomicLoraBasedKaijuServiceHandler(RequestDispatcher dispatcher){
         super(dispatcher);
-        last = Maps.newConcurrentMap();
     }
 
-    
-    public void addLast(final String key, final Long value, final List<String> keyList) throws HandlerException{
-        try{
-            this.last.entrySet().parallelStream().onClose(()->{keyList.parallelStream().forEach(k -> this.last.putIfAbsent(k, value)); this.last.putIfAbsent(key, value);}).filter((e) -> (e.getKey() == key || keyList.contains(e.getKey()))).forEach(e-> e.setValue((e.getValue() > value) ? e.getValue() : value));        
-        }catch(Exception e){
-            throw new HandlerException("Error updating Last", e);
-        }
-    }
-
-    public long getLastTimestamp(final String key){
-        return (this.last.containsKey(key)) ? this.last.get(key) : Timestamp.NO_TIMESTAMP;
-    }
-    
     public void prepare_all(Map<String, byte[]> keyValuePairs, long timestamp) throws HandlerException{
         try {
             // generate a timestamp for this transaction
@@ -103,19 +88,8 @@ public class ReadAtomicLoraBasedKaijuServiceHandler extends ReadAtomicKaijuServi
 
     public Map<String,byte[]> get_all(List<String> keys) throws HandlerException{
         try{
-            Map<String,Long> get_set = Maps.newHashMap();
-            List<String> get_set_no_ts = Lists.newArrayList();
-            for(String k : keys){
-                long timestamp = getLastTimestamp(k);
-                if(timestamp == Timestamp.NO_TIMESTAMP || timestamp < 0){
-                    get_set_no_ts.add(k);
-                    continue;
-                }
-                get_set.put(k, timestamp);
-            }
-            Collection<KaijuResponse> responses = fetch_by_version_from_server(get_set);
-            Collection<KaijuResponse> responses2 = fetch_from_server(get_set_no_ts);
-            responses.addAll(responses2);
+            
+            Collection<KaijuResponse> responses = fetch_from_server(keys);
             Map<String,byte[]> ret = Maps.newHashMap();
 
 
@@ -123,14 +97,6 @@ public class ReadAtomicLoraBasedKaijuServiceHandler extends ReadAtomicKaijuServi
                 for(Map.Entry<String,DataItem> keyValuePair : response.keyValuePairs.entrySet()){
                     if(keyValuePair == null || keyValuePair.getValue() == null || keyValuePair.getKey() == null || keyValuePair.getValue().getValue() == null) continue;
                     ret.put(keyValuePair.getKey(), keyValuePair.getValue().getValue());
-                    if(keyValuePair.getValue().getTimestamp() < Timestamp.NO_TIMESTAMP) continue;
-                    if(keyValuePair.getValue().getTransactionKeys() == null || keyValuePair.getValue().getTransactionKeys().isEmpty()){
-                        addLast(keyValuePair.getKey(), keyValuePair.getValue().getTimestamp(), Lists.newArrayList());
-                        continue;
-                    }
-                    List<String> ks = Lists.newArrayList();
-                    ks.addAll(keyValuePair.getValue().getTransactionKeys());
-                    addLast(keyValuePair.getKey(),keyValuePair.getValue().getTimestamp(), ks);
                 }
             }
             return ret;

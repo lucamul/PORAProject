@@ -9,10 +9,12 @@ import com.yammer.metrics.Meter;
 import com.yammer.metrics.MetricRegistry;
 import edu.berkeley.kaiju.config.Config;
 import edu.berkeley.kaiju.config.Config.IsolationLevel;
+import edu.berkeley.kaiju.config.Config.ReadAtomicAlgorithm;
 import edu.berkeley.kaiju.data.DataItem;
 import edu.berkeley.kaiju.data.ItemVersion;
 import edu.berkeley.kaiju.data.LastValue;
 import edu.berkeley.kaiju.exception.AbortedException;
+import edu.berkeley.kaiju.exception.HandlerException;
 import edu.berkeley.kaiju.exception.KaijuException;
 import edu.berkeley.kaiju.monitor.MetricsManager;
 import edu.berkeley.kaiju.util.Timestamp;
@@ -26,6 +28,7 @@ import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.stream.Collectors;
 
 /*
  Fairly simple in-memory KVS with limited support for multiversioning.
@@ -113,7 +116,21 @@ public class MemoryStorageEngine {
     // used for freshness:
     public ConcurrentMap<KeyTimestampPair,Long> timesPerVersion = Maps.newConcurrentMap();
     public ConcurrentMap<String,Long> latestTime = Maps.newConcurrentMap();
-                                                                                
+    
+    private ConcurrentMap<String,Long> last = Maps.newConcurrentMap();
+   
+
+    public void addLast(final String key, final Long value, final List<String> keyList) throws HandlerException{
+        try{
+            this.last.entrySet().parallelStream().onClose(()->{keyList.parallelStream().forEach(k -> this.last.putIfAbsent(k, value)); this.last.putIfAbsent(key, value);}).filter((e) -> (e.getKey() == key || keyList.contains(e.getKey()))).forEach(e-> e.setValue((e.getValue() > value) ? e.getValue() : value));        
+        }catch(Exception e){
+            throw new HandlerException("Error updating Last", e);
+        }
+    }
+
+    public long getLastTimestamp(final String key){
+        return (this.last.containsKey(key)) ? this.last.get(key) : Timestamp.NO_TIMESTAMP;
+    }
     
     public MemoryStorageEngine() {
         // GC old versions
@@ -145,6 +162,21 @@ public class MemoryStorageEngine {
 
     // get last committed write for each key
     public Map<String, DataItem> getAll(Collection<String> keys) throws KaijuException {
+        if(Config.getConfig().readatomic_algorithm == ReadAtomicAlgorithm.LORA){
+            HashMap<String, DataItem> results = Maps.newHashMap();
+            for(String key : keys) {
+                long timestamp = getLastTimestamp(key);
+                DataItem item;
+                if(timestamp == Timestamp.NO_TIMESTAMP)
+                    item = DataItem.getNullItem();
+                else
+                    item = getByTimestamp(key, timestamp);
+                addLast(key, item.getTimestamp(), Lists.newArrayList(item.getTransactionKeys()));
+                results.put(key, item);
+            }
+            return results;
+        }
+        
         HashMap<String, DataItem> results = Maps.newHashMap();
 
         for(String key : keys) {
@@ -232,7 +264,7 @@ public class MemoryStorageEngine {
         if(ret == null)
             logger.warn("No suitable value found for key " + key
                                                + " version " + requiredTimestamp);
-        else{
+        else if(Config.getConfig().freshness_test){
             long t = this.latestTime.get(key) - this.timesPerVersion.get(this.createNewKeyTimestampPair(key, requiredTimestamp));
             logger.warn("Round 2 Freshness for key: " + key + " timestamp: " + requiredTimestamp + " = " + t);
         }
@@ -245,7 +277,7 @@ public class MemoryStorageEngine {
         // have to examine pending items now; look from highest to lowest
         for(long candidateStamp : inputTimestampList) {
             DataItem candidate = getItemByVersion(key, candidateStamp);
-            if(candidate != null){
+            if(candidate != null && Config.getConfig().freshness_test){
                 long t = this.latestTime.get(key) - this.timesPerVersion.get(this.createNewKeyTimestampPair(key, candidateStamp));
                 logger.warn("Freshness for key: " + key + " timestamp: " + candidateStamp + " = " + t);
                 return candidate;
@@ -258,8 +290,10 @@ public class MemoryStorageEngine {
     private DataItem getLatestItemForKey(String key) {
         if(!lastCommitForKey.containsKey(key))
             return DataItem.getNullItem();
-        long t = this.latestTime.get(key) - this.timesPerVersion.get(this.createNewKeyTimestampPair(key, lastCommitForKey.get(key)));
-        logger.warn("Round 1 Freshness for key: " + key + " timestamp: " + lastCommitForKey.get(key) + " = " + t);
+        else if(Config.getConfig().freshness_test){
+            long t = this.latestTime.get(key) - this.timesPerVersion.get(this.createNewKeyTimestampPair(key, lastCommitForKey.get(key)));
+            logger.warn("Round 1 Freshness for key: " + key + " timestamp: " + lastCommitForKey.get(key) + " = " + t);
+        }
         return getItemByVersion(key, lastCommitForKey.get(key));
     }
 
@@ -327,16 +361,24 @@ public class MemoryStorageEngine {
         preparedNotCommittedByStamp.put(timestamp, pendingPairs);
 
     }
-
+    //TO DO: try to move LORA to prepare from commit
     public void commit(long timestamp) throws KaijuException {
         List<KeyTimestampPair> toUpdate = preparedNotCommittedByStamp.get(timestamp);
-
         if(toUpdate == null) {
             return;
         }
-
+        
+        Map<String,Long> updateLastSet = Maps.newHashMap();
         for(KeyTimestampPair pair : toUpdate) {
             commit(pair.getKey(), pair.getTimestamp());
+            if(Config.getConfig().readatomic_algorithm == ReadAtomicAlgorithm.LORA){
+                if(!last.containsKey(pair.getKey()) || last.get(pair.getKey()) < pair.getTimestamp()){
+                    updateLastSet.putIfAbsent(pair.getKey(), pair.getTimestamp());
+                }
+            }
+        }
+        if(Config.getConfig().readatomic_algorithm == ReadAtomicAlgorithm.LORA){
+            last.putAll(updateLastSet);
         }
 
         preparedNotCommittedByStamp.remove(timestamp);

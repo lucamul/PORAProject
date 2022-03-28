@@ -130,16 +130,6 @@ public class KaijuServiceHandler implements IKaijuHandler {
                 throw e;
             } finally {
                     context.stop();
-                    try{
-                        for(String key : values.keySet()){
-                            List<String> l = Lists.newArrayList(values.keySet());
-                            l.remove(key);
-                            handler.addLast(key, timestamp, l);
-                        }
-                    }catch(Exception e){
-                        logger.warn("put_all exception", e);
-                        throw e;
-                    }
                     CompletableFuture.runAsync(()->{
                         try{
                             handler.commit_all(values, timestamp);
